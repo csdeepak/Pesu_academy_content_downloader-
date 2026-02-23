@@ -8,10 +8,17 @@ dispatching every Playwright coroutine there via `run_in_pw_loop()`.
 """
 
 import asyncio
+import logging
+import os
 import threading
-import traceback
 
 from playwright.async_api import async_playwright
+
+logger = logging.getLogger(__name__)
+
+# Whether to run the browser in headless mode (default: True for production).
+# Set HEADLESS=false in environment to see the browser window.
+HEADLESS = os.getenv("HEADLESS", "true").lower() in ("true", "1", "yes")
 
 # ---------------------------------------------------------------------------
 # Dedicated Playwright event-loop (runs in its own daemon thread)
@@ -50,16 +57,16 @@ active_sessions: dict[str, dict] = {}
 # ---------------------------------------------------------------------------
 
 async def _create_session_impl(session_id: str) -> dict:
-    print(f"[session_manager] Creating session {session_id} ...", flush=True)
+    logger.info("Creating session %s …", session_id)
 
     playwright = await async_playwright().start()
-    print(f"[session_manager] Playwright started.", flush=True)
+    logger.info("Playwright started.")
 
     browser = await playwright.chromium.launch(
-        headless=False,
+        headless=HEADLESS,
         args=["--no-sandbox", "--disable-dev-shm-usage"],
     )
-    print(f"[session_manager] Chromium launched.", flush=True)
+    logger.info("Chromium launched (headless=%s).", HEADLESS)
 
     context = await browser.new_context()
     page = await context.new_page()
@@ -71,25 +78,25 @@ async def _create_session_impl(session_id: str) -> dict:
         "page": page,
     }
     active_sessions[session_id] = session
-    print(f"[session_manager] Session {session_id} ready.", flush=True)
+    logger.info("Session %s ready.", session_id)
     return session
 
 
 async def _close_session_impl(session_id: str) -> bool:
     session = active_sessions.get(session_id)
     if session is None:
-        print(f"[session_manager] Session {session_id} not found.", flush=True)
+        logger.warning("Session %s not found.", session_id)
         return False
 
     try:
         await session["browser"].close()
         await session["playwright"].stop()
     except Exception as exc:
-        print(f"[session_manager] Cleanup error: {exc}", flush=True)
+        logger.error("Cleanup error: %s", exc)
     finally:
         active_sessions.pop(session_id, None)
 
-    print(f"[session_manager] Session {session_id} closed.", flush=True)
+    logger.info("Session %s closed.", session_id)
     return True
 
 

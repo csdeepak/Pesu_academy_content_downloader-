@@ -1,7 +1,7 @@
 """
 navigator.py — Navigate PESU Academy to discover courses, units and content.
 
-Real page structure (discovered via debug inspection):
+Real page structure (discovered via inspection):
   - After login  → studentProfilePESU (Profile | Home)
   - Click "My Courses" sidebar link (href=javascript:void(0))
   - Courses page  → select#semesters, course rows in div[id^='rowWiseCourseContent_']
@@ -13,32 +13,11 @@ Real page structure (discovered via debug inspection):
 
 from __future__ import annotations
 
-import os
-from pathlib import Path
+import logging
 
 from playwright.async_api import Page, TimeoutError as PlaywrightTimeout
 
-# Where to save debug screenshots
-_DEBUG_DIR = Path(__file__).resolve().parent.parent.parent / "downloads" / "debug"
-
-
-# ──────────────────────────────────────────────────────────────
-# Debug helper
-# ──────────────────────────────────────────────────────────────
-
-async def debug_page(page: Page, label: str) -> None:
-    """Log URL + title and save a screenshot for debugging."""
-    try:
-        _DEBUG_DIR.mkdir(parents=True, exist_ok=True)
-        url = page.url
-        title = await page.title()
-        print(f"[debug] [{label}] URL : {url}", flush=True)
-        print(f"[debug] [{label}] Title: {title}", flush=True)
-        path = _DEBUG_DIR / f"debug_{label}.png"
-        await page.screenshot(path=str(path), full_page=True)
-        print(f"[debug] [{label}] Screenshot → {path}", flush=True)
-    except Exception as exc:
-        print(f"[debug] [{label}] screenshot failed: {exc}", flush=True)
+logger = logging.getLogger(__name__)
 
 
 # ──────────────────────────────────────────────────────────────
@@ -47,12 +26,12 @@ async def debug_page(page: Page, label: str) -> None:
 
 async def go_to_my_courses(page: Page) -> None:
     """Click the sidebar "My Courses" link and wait for the listing."""
-    print("[nav] Navigating to My Courses…", flush=True)
+    logger.info("Navigating to My Courses…")
 
     link = page.locator("a:has-text('My Courses')").first
     await link.wait_for(state="visible", timeout=10_000)
     await link.click()
-    print("[nav] Clicked 'My Courses' link.", flush=True)
+    logger.info("Clicked 'My Courses' link.")
 
     # Wait for the courses table or the semester dropdown to appear
     await page.wait_for_selector(
@@ -65,8 +44,7 @@ async def go_to_my_courses(page: Page) -> None:
     except PlaywrightTimeout:
         pass
 
-    await debug_page(page, "my_courses")
-    print("[nav] My Courses page loaded.", flush=True)
+    logger.info("My Courses page loaded.")
 
 
 # ──────────────────────────────────────────────────────────────
@@ -83,7 +61,7 @@ async def get_courses(page: Page) -> list[dict]:
     Returns [{"id": "21631",
               "name": "UE23CS320B — Capstone Project Phase - II"}, …]
     """
-    print("[nav] Scraping course list…", flush=True)
+    logger.info("Scraping course list…")
 
     courses: list[dict] = await page.evaluate("""() => {
         // The rows are <tr id="rowWiseCourseContent_21631" onclick="clickOnCourseContent('21631', event)">
@@ -103,9 +81,9 @@ async def get_courses(page: Page) -> list[dict]:
     }""")
 
     courses = [c for c in courses if c.get("name")]
-    print(f"[nav] Found {len(courses)} course(s).", flush=True)
+    logger.info("Found %d course(s).", len(courses))
     for c in courses:
-        print(f"[nav]   • {c['name']}", flush=True)
+        logger.debug("  • %s", c['name'])
     return courses
 
 
@@ -122,46 +100,42 @@ async def get_units(page: Page, course_id: str) -> list[dict]:
 
     Returns [{"id": "0", "name": "Introduction to Deep Learning"}, …]
     """
-    print(f"[nav] Clicking course '{course_id}'…", flush=True)
+    logger.info("Clicking course '%s'…", course_id)
 
     # Call the site's own JS function to open the course detail
     try:
         await page.evaluate(f"clickOnCourseContent('{course_id}', new Event('click'))")
-        print(f"[nav] Called clickOnCourseContent('{course_id}').", flush=True)
+        logger.info("Called clickOnCourseContent('%s').", course_id)
     except Exception as e:
-        print(f"[nav] JS call failed ({e}), trying row click…", flush=True)
+        logger.warning("JS call failed (%s), trying row click…", e)
         try:
             row = page.locator(f"#rowWiseCourseContent_{course_id}")
             await row.click()
         except Exception as e2:
-            print(f"[nav] Row click also failed: {e2}", flush=True)
+            logger.error("Row click also failed: %s", e2)
 
     # Wait for the course detail page to load (Level-1 tabs)
-    print("[nav] Waiting for course detail page…", flush=True)
+    logger.info("Waiting for course detail page…")
     try:
         await page.wait_for_load_state("networkidle", timeout=15_000)
     except PlaywrightTimeout:
         pass
 
-    await debug_page(page, "course_detail")
-
     # Click the "Course Units" tab (Level-1)
-    print("[nav] Looking for 'Course Units' tab…", flush=True)
+    logger.info("Looking for 'Course Units' tab…")
     course_units_tab = page.locator("a:has-text('Course Units'), li:has-text('Course Units') a").first
     try:
         await course_units_tab.wait_for(state="visible", timeout=10_000)
         await course_units_tab.click()
-        print("[nav] Clicked 'Course Units' tab.", flush=True)
+        logger.info("Clicked 'Course Units' tab.")
     except PlaywrightTimeout:
-        print("[nav] 'Course Units' tab not found – may already be active.", flush=True)
+        logger.info("'Course Units' tab not found – may already be active.")
 
     # Wait for Level-2 unit tabs to appear
     try:
         await page.wait_for_load_state("networkidle", timeout=10_000)
     except PlaywrightTimeout:
         pass
-
-    await debug_page(page, "course_units")
 
     # Scrape all Level-2 unit tabs from ul#courselistunit
     # This is the specific container inside the "Course Units" tab pane (#course_3)
@@ -177,9 +151,9 @@ async def get_units(page: Page, course_id: str) -> list[dict]:
     }""")
 
     units = [u for u in units if u.get("name")]
-    print(f"[nav] Found {len(units)} unit(s).", flush=True)
+    logger.info("Found %d unit(s).", len(units))
     for u in units:
-        print(f"[nav]   • [{u['id']}] {u['name']}", flush=True)
+        logger.debug("  • [%s] %s", u['id'], u['name'])
     return units
 
 
@@ -193,7 +167,7 @@ async def click_unit(page: Page, unit_index: int) -> dict:
 
     Returns e.g. {"Slides": 3, "Notes": 4, "Assignments": 5, …}
     """
-    print(f"[nav] Clicking unit tab index {unit_index}…", flush=True)
+    logger.info("Clicking unit tab index %d…", unit_index)
 
     # Re-discover the unit tabs from ul#courselistunit and click the one at unit_index
     clicked = await page.evaluate("""(idx) => {
@@ -208,7 +182,7 @@ async def click_unit(page: Page, unit_index: int) -> dict:
     }""", unit_index)
 
     if not clicked:
-        print(f"[nav] Unit tab at index {unit_index} not found!", flush=True)
+        logger.warning("Unit tab at index %d not found!", unit_index)
         return {}
 
     # Wait for the content table to appear
@@ -216,8 +190,6 @@ async def click_unit(page: Page, unit_index: int) -> dict:
         await page.wait_for_load_state("networkidle", timeout=10_000)
     except PlaywrightTimeout:
         pass
-
-    await debug_page(page, f"unit_{unit_index}")
 
     # Read the table headers to build a column mapping
     col_map: dict = await page.evaluate("""() => {
@@ -236,5 +208,5 @@ async def click_unit(page: Page, unit_index: int) -> dict:
         return {};
     }""")
 
-    print(f"[nav] Content table columns: {col_map}", flush=True)
+    logger.info("Content table columns: %s", col_map)
     return col_map

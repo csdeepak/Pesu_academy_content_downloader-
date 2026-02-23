@@ -10,16 +10,21 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 import aiohttp
+import yarl
 
-# Root downloads directory (pesu_downloader/downloads/)
-DOWNLOADS_DIR = Path(__file__).resolve().parent.parent.parent / "downloads"
+# Root downloads directory — uses the system's default Downloads folder
+DOWNLOADS_DIR = Path.home() / "Downloads" / "PESU_Downloads"
 
 
-def _sanitise_name(name: str) -> str:
-    """Remove or replace characters that are illegal in file / folder names."""
+def _sanitise_name(name: str, max_len: int = 80) -> str:
+    """Remove or replace characters that are illegal in file / folder names.
+    Also truncate to *max_len* to avoid exceeding Windows MAX_PATH."""
     name = name.strip()
     name = re.sub(r'[<>:"/\\|?*]', "_", name)
     name = re.sub(r"_+", "_", name)
+    name = name.strip("_. ")
+    if len(name) > max_len:
+        name = name[:max_len].rstrip("_. ")
     return name or "unnamed"
 
 
@@ -41,6 +46,7 @@ async def download_files(
     files_data: list[dict],
     subject_name: str,
     unit_name: str,
+    cookies: list[dict] | None = None,
 ) -> dict:
     """Download every file described in *files_data* (the output of
     ``extract_links``) into organised folders under ``downloads/``.
@@ -57,6 +63,8 @@ async def download_files(
         Human-readable subject name (used as a folder name).
     unit_name : str
         Human-readable unit name (used as a folder name).
+    cookies : list[dict], optional
+        Playwright-format cookies to send with requests (for authenticated downloads).
 
     Returns
     -------
@@ -68,7 +76,16 @@ async def download_files(
     skipped = 0
     failed = 0
 
-    async with aiohttp.ClientSession() as session:
+    # Build a cookie jar from Playwright cookies
+    jar = aiohttp.CookieJar()
+    if cookies:
+        for c in cookies:
+            jar.update_cookies(
+                {c["name"]: c["value"]},
+                response_url=yarl.URL(f"https://{c.get('domain', 'www.pesuacademy.com')}"),
+            )
+
+    async with aiohttp.ClientSession(cookie_jar=jar) as session:
         for group in files_data:
             content_type = group.get("content_type", "General")
             files = group.get("files", [])
@@ -84,6 +101,8 @@ async def download_files(
                 / _sanitise_name(unit_name)
                 / _sanitise_name(content_type)
             )
+            # Use \\?\ prefix on Windows to support long paths
+            target_dir = Path(f"\\\\?\\{target_dir.resolve()}")
             target_dir.mkdir(parents=True, exist_ok=True)
             print(f"[downloader] Saving '{content_type}' files to: {target_dir}")
 
@@ -113,17 +132,23 @@ async def download_files(
                             failed += 1
                             continue
 
-                        # Re-derive filename from response headers if the
-                        # original name is generic
-                        if name in ("download", "unnamed"):
-                            better_name = _filename_from_response(url, dict(resp.headers))
-                            if better_name not in ("download", "unnamed"):
-                                name = better_name
-                                dest = target_dir / name
-                                if dest.exists():
-                                    print(f"(resolved to '{name}') already exists — skipped.")
-                                    skipped += 1
-                                    continue
+                        # Always try to get a better filename from Content-Disposition
+                        better_name = _filename_from_response(url, dict(resp.headers))
+                        if better_name not in ("download", "unnamed"):
+                            # Use the server-provided name but keep our prefix
+                            # e.g. "classname — server_name.pdf"
+                            ext = Path(better_name).suffix
+                            if ext and not Path(name).suffix:
+                                name = name + ext
+                                dest = target_dir / _sanitise_name(name)
+                        elif name in ("download", "unnamed"):
+                            name = better_name
+                            dest = target_dir / _sanitise_name(name)
+
+                        if dest.exists():
+                            print(f"'{_sanitise_name(name)}' already exists — skipped.")
+                            skipped += 1
+                            continue
 
                         # Stream to disk
                         with open(dest, "wb") as f:

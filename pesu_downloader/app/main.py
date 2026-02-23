@@ -4,7 +4,7 @@ from fastapi.templating import Jinja2Templates
 import uvicorn
 from pathlib import Path
 
-from routes import router
+from app.routes import router
 
 app = FastAPI(title="PESU Academy Content Downloader")
 

@@ -220,16 +220,10 @@ select.input-field option{background:#0a1225;color:#c8d6e5}
       <!-- PHASE 2-3-4: Navigation & Download -->
       <div id="phase-nav" style="display:none">
 
-        <!-- Dropdowns row -->
-        <div class="grid grid-cols-2 gap-3 mb-3">
-          <div>
-            <label class="input-label">Semester</label>
-            <select class="input-field" id="sel-semester"><option value="">&#8212;</option></select>
-          </div>
-          <div>
-            <label class="input-label">Subject</label>
-            <select class="input-field" id="sel-subject"><option value="">&#8212;</option></select>
-          </div>
+        <!-- Dropdowns -->
+        <div class="mb-3">
+          <label class="input-label">Course</label>
+          <select class="input-field" id="sel-course"><option value="">&#8212;</option></select>
         </div>
         <div class="mb-5">
           <label class="input-label">Unit</label>
@@ -409,10 +403,10 @@ var currentPhase=1;
 var downloading=false;
 var progressTimer=null;
 
-/* Semester / subject / unit data caches */
-var semestersData=[];
-var subjectsData=[];
+/* Data caches */
+var coursesData=[];
 var unitsData=[];
+var columnMap={};  /* e.g. {"Slides":3,"Notes":4,…} — from /click_unit */
 
 /* ═══════════════════════════════════════════
    LOGGING
@@ -510,7 +504,7 @@ async function doLogin(){
     document.getElementById('phase-login').style.display='none';
     document.getElementById('phase-nav').style.display='block';
     setPhase(2);
-    fetchSemesters();
+    fetchCourses();
   }catch(err){
     log('Login failed \u2014 '+err.message,'error');
     btnLogin.disabled=false;
@@ -519,57 +513,35 @@ async function doLogin(){
 }
 
 /* ═══════════════════════════════════════════
-   FETCH SEMESTERS
+   FETCH COURSES (replaces fetchSemesters + fetchSubjects)
    ═══════════════════════════════════════════ */
-async function fetchSemesters(){
-  log('Fetching semesters...','loading');
+async function fetchCourses(){
+  log('Navigating to My Courses...','loading');
   try{
-    var data=await api('/fetch_semesters',{session_id:SESSION_ID});
-    semestersData=data.semesters||[];
-    var sel=document.getElementById('sel-semester');
-    sel.innerHTML='<option value="">Select semester</option>';
-    semestersData.forEach(function(s){
-      var o=document.createElement('option');o.value=s.value;o.textContent=s.label;sel.appendChild(o);
+    var data=await api('/fetch_courses',{session_id:SESSION_ID});
+    coursesData=data.courses||[];
+    var sel=document.getElementById('sel-course');
+    sel.innerHTML='<option value="">Select course</option>';
+    coursesData.forEach(function(c){
+      var o=document.createElement('option');o.value=c.id;o.textContent=c.name;sel.appendChild(o);
     });
-    log('Loaded '+semestersData.length+' semester(s).','success');
-  }catch(err){log('Failed to fetch semesters \u2014 '+err.message,'error')}
+    log('Loaded '+coursesData.length+' course(s).','success');
+  }catch(err){log('Failed to fetch courses \u2014 '+err.message,'error')}
 }
 
 /* ═══════════════════════════════════════════
-   FETCH SUBJECTS
+   FETCH UNITS  (on course change)
    ═══════════════════════════════════════════ */
-document.getElementById('sel-semester').addEventListener('change',async function(){
-  var v=this.value;
-  var selSubject=document.getElementById('sel-subject');
-  var selUnit=document.getElementById('sel-unit');
-  selSubject.innerHTML='<option value="">\u2014</option>';
-  selUnit.innerHTML='<option value="">\u2014</option>';
-  subjectsData=[];unitsData=[];
-  if(!v)return;
-  log('Fetching subjects for semester...','loading');
-  try{
-    var data=await api('/fetch_subjects',{session_id:SESSION_ID,semester_value:v});
-    subjectsData=data.subjects||[];
-    selSubject.innerHTML='<option value="">Select subject</option>';
-    subjectsData.forEach(function(s){
-      var o=document.createElement('option');o.value=s.id;o.textContent=s.name;selSubject.appendChild(o);
-    });
-    log('Loaded '+subjectsData.length+' subject(s).','success');
-  }catch(err){log('Failed to fetch subjects \u2014 '+err.message,'error')}
-});
-
-/* ═══════════════════════════════════════════
-   FETCH UNITS
-   ═══════════════════════════════════════════ */
-document.getElementById('sel-subject').addEventListener('change',async function(){
+document.getElementById('sel-course').addEventListener('change',async function(){
   var v=this.value;
   var selUnit=document.getElementById('sel-unit');
   selUnit.innerHTML='<option value="">\u2014</option>';
   unitsData=[];
+  columnMap={};
   if(!v)return;
-  log('Fetching units...','loading');
+  log('Fetching units for course...','loading');
   try{
-    var data=await api('/fetch_units',{session_id:SESSION_ID,subject_id:v});
+    var data=await api('/fetch_units',{session_id:SESSION_ID,course_id:v});
     unitsData=data.units||[];
     selUnit.innerHTML='<option value="">Select unit</option>';
     unitsData.forEach(function(u){
@@ -581,17 +553,33 @@ document.getElementById('sel-subject').addEventListener('change',async function(
 });
 
 /* ═══════════════════════════════════════════
+   CLICK UNIT  (on unit change — load column map)
+   ═══════════════════════════════════════════ */
+document.getElementById('sel-unit').addEventListener('change',async function(){
+  var v=this.value;
+  columnMap={};
+  if(!v)return;
+  log('Loading content table for unit...','loading');
+  try{
+    var data=await api('/click_unit',{session_id:SESSION_ID,unit_index:parseInt(v,10)});
+    columnMap=data.columns||{};
+    var cols=Object.keys(columnMap).filter(function(k){return k!=='Class'&&k!=='#'});
+    log('Content columns: '+cols.join(', '),'success');
+  }catch(err){log('Failed to load unit content \u2014 '+err.message,'error')}
+});
+
+/* ═══════════════════════════════════════════
    DOWNLOAD
    ═══════════════════════════════════════════ */
 async function handleDownload(mode){
   if(downloading)return;
-  var subjectSel=document.getElementById('sel-subject');
+  var courseSel=document.getElementById('sel-course');
   var unitSel=document.getElementById('sel-unit');
-  var subjectName=(subjectSel.options[subjectSel.selectedIndex]||{}).text||'';
-  var unitId=unitSel.value;
+  var courseName=(courseSel.options[courseSel.selectedIndex]||{}).text||'';
   var unitName=(unitSel.options[unitSel.selectedIndex]||{}).text||'';
 
-  if(!unitId){log('Please select a unit first.','error');return}
+  if(!unitSel.value){log('Please select a unit first.','error');return}
+  if(!Object.keys(columnMap).length){log('No content table loaded. Please re-select the unit.','error');return}
 
   var contentTypes=[];
   if(mode==='selective'){
@@ -608,7 +596,7 @@ async function handleDownload(mode){
 
   try{
     setProgress(40,'Downloading files...');
-    var data=await api('/download',{session_id:SESSION_ID,subject_name:subjectName,unit_id:unitId,unit_name:unitName,content_types:contentTypes,mode:mode});
+    var data=await api('/download',{session_id:SESSION_ID,course_name:courseName,unit_name:unitName,content_types:contentTypes,mode:mode});
     var s=data.summary||{};
     setProgress(100,'Complete');
     log('Download complete \u2014 '+(s.downloaded||0)+' downloaded, '+(s.skipped||0)+' skipped, '+(s.failed||0)+' failed.','success');
@@ -634,10 +622,10 @@ async function terminateSession(){
   document.getElementById('phase-login').style.display='block';
   btnLogin.disabled=false;btnLogin.textContent='Initialize Session';
   inpUser.value='';inpPass.value='';
-  document.getElementById('sel-semester').innerHTML='<option value="">\u2014</option>';
-  document.getElementById('sel-subject').innerHTML='<option value="">\u2014</option>';
+  document.getElementById('sel-course').innerHTML='<option value="">\u2014</option>';
   document.getElementById('sel-unit').innerHTML='<option value="">\u2014</option>';
   document.getElementById('progress-wrap').classList.remove('visible');
+  coursesData=[];unitsData=[];columnMap={};
   setPhase(1);
   log('Session terminated. Ready for re-authentication.','info');
 }
@@ -646,7 +634,6 @@ async function terminateSession(){
    INIT
    ═══════════════════════════════════════════ */
 document.addEventListener('DOMContentLoaded',function(){
-  /* Trigger fade-up animations */
   document.querySelectorAll('.fade-up').forEach(function(el,i){
     setTimeout(function(){el.classList.add('visible')},parseFloat(el.style.animationDelay||0)*1000||i*150);
   });

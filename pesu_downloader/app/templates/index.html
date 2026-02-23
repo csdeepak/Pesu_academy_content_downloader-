@@ -1,11 +1,657 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PESU Academy Content Downloader</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PESU Vault — Course Content Downloader</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Orbitron:wght@500;700;900&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<style>
+:root{--bg:#020408;--cyan:#00f5ff;--blue:#0066ff;--violet:#7b2fff;--green:#00ff88;--red:#ff3c5f;--amber:#ffb800;--glass:rgba(6,14,30,0.72);--glass-border:rgba(0,245,255,0.08)}
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:#c8d6e5;font-family:'Inter',sans-serif;min-height:100vh;overflow-x:hidden;position:relative}
+
+/* Scanline overlay */
+body::before{content:'';position:fixed;inset:0;z-index:2;pointer-events:none;
+background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,245,255,0.012) 2px,rgba(0,245,255,0.012) 4px)}
+
+/* Vignette */
+body::after{content:'';position:fixed;inset:0;z-index:2;pointer-events:none;
+background:radial-gradient(ellipse at center,transparent 50%,rgba(2,4,8,0.7) 100%)}
+
+/* Custom scrollbar */
+::-webkit-scrollbar{width:5px}
+::-webkit-scrollbar-track{background:rgba(0,0,0,0.3)}
+::-webkit-scrollbar-thumb{background:var(--cyan);border-radius:10px}
+::-webkit-scrollbar-thumb:hover{background:#33f7ff}
+
+/* Three.js canvas */
+#bg-canvas{position:fixed;inset:0;z-index:0;pointer-events:none}
+
+/* Main UI layer */
+.ui-layer{position:relative;z-index:10;max-width:580px;margin:0 auto;padding:40px 16px 60px}
+
+/* Fonts */
+.font-orbitron{font-family:'Orbitron',sans-serif}
+.font-space{font-family:'Space Mono',monospace}
+
+/* Glass card */
+.glass-card{background:var(--glass);border:1px solid var(--glass-border);border-radius:16px;backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);position:relative;overflow:hidden}
+.glass-card::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;
+background:linear-gradient(90deg,transparent 0%,var(--cyan) 50%,transparent 100%);opacity:.45}
+
+/* Gradient text */
+.gradient-text{background:linear-gradient(135deg,#ffffff 0%,var(--cyan) 50%,var(--blue) 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+
+/* Pill badge */
+.pill-badge{display:inline-flex;align-items:center;gap:8px;padding:6px 18px;border-radius:999px;border:1px solid rgba(0,245,255,0.15);background:rgba(0,245,255,0.04);font-size:11px;letter-spacing:1.5px;text-transform:uppercase;color:rgba(0,245,255,0.7)}
+.pulse-dot{width:6px;height:6px;border-radius:50%;background:var(--cyan);animation:pulse-glow 2s ease-in-out infinite}
+@keyframes pulse-glow{0%,100%{box-shadow:0 0 4px var(--cyan),0 0 8px var(--cyan);opacity:.7}50%{box-shadow:0 0 8px var(--cyan),0 0 20px var(--cyan);opacity:1}}
+
+/* Phase stepper */
+.stepper{display:flex;align-items:flex-start;justify-content:center;gap:0;margin:32px 0 36px;position:relative}
+.step{display:flex;flex-direction:column;align-items:center;gap:8px;flex:1;position:relative;z-index:1}
+.step-circle{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:'Orbitron',sans-serif;font-size:13px;font-weight:700;border:2px solid rgba(255,255,255,0.1);color:rgba(255,255,255,0.25);background:rgba(6,14,30,0.9);transition:all 0.4s ease;position:relative}
+.step-label{font-size:10px;letter-spacing:1px;text-transform:uppercase;color:rgba(255,255,255,0.2);transition:color 0.4s ease;font-family:'Space Mono',monospace}
+.step.active .step-circle{border-color:var(--cyan);color:var(--cyan);box-shadow:0 0 16px rgba(0,245,255,0.3),0 0 40px rgba(0,245,255,0.08)}
+.step.active .step-label{color:var(--cyan)}
+.step.completed .step-circle{border-color:var(--green);color:var(--green);background:rgba(0,255,136,0.08)}
+.step.completed .step-label{color:var(--green)}
+.step-line{position:absolute;top:18px;height:2px;background:rgba(255,255,255,0.06);z-index:0}
+.step-line.done{background:var(--green)}
+.step-line.active-line{background:linear-gradient(90deg,var(--green),var(--cyan))}
+
+/* Inputs */
+.input-field{width:100%;padding:12px 16px;border-radius:10px;border:1px solid rgba(255,255,255,0.08);background:rgba(0,0,0,0.35);color:#e0e8f0;font-family:'Space Mono',monospace;font-size:13px;outline:none;transition:border-color 0.3s,box-shadow 0.3s}
+.input-field::placeholder{color:rgba(255,255,255,0.2)}
+.input-field:focus{border-color:rgba(0,245,255,0.35);box-shadow:0 0 0 3px rgba(0,245,255,0.06)}
+.input-label{display:block;font-size:11px;letter-spacing:1px;text-transform:uppercase;color:rgba(0,245,255,0.5);margin-bottom:6px;font-family:'Space Mono',monospace}
+
+select.input-field{appearance:none;-webkit-appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%2300f5ff' viewBox='0 0 16 16'%3E%3Cpath d='M8 11L3 6h10z'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 14px center;padding-right:36px;cursor:pointer}
+select.input-field option{background:#0a1225;color:#c8d6e5}
+
+/* Primary button */
+.btn-primary{width:100%;padding:14px 24px;border:none;border-radius:12px;background:linear-gradient(135deg,var(--blue),var(--cyan));color:#fff;font-family:'Orbitron',sans-serif;font-size:13px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;cursor:pointer;position:relative;overflow:hidden;transition:transform 0.2s,box-shadow 0.3s}
+.btn-primary:hover{transform:translateY(-2px);box-shadow:0 8px 30px rgba(0,102,255,0.25)}
+.btn-primary:active{transform:translateY(0) scale(0.98)}
+.btn-primary:disabled{opacity:0.45;cursor:not-allowed;transform:none;box-shadow:none}
+.btn-primary::before{content:'';position:absolute;top:0;left:-100%;width:60%;height:100%;background:linear-gradient(90deg,transparent,rgba(255,255,255,0.12),transparent);transition:none}
+.btn-primary:hover::before{animation:shimmer 0.8s ease forwards}
+@keyframes shimmer{to{left:150%}}
+
+/* Dual buttons */
+.btn-outline{padding:12px 20px;border-radius:12px;border:1px solid var(--cyan);background:transparent;color:var(--cyan);font-family:'Orbitron',sans-serif;font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;cursor:pointer;transition:all 0.3s;position:relative;overflow:hidden;flex:1}
+.btn-outline:hover{background:rgba(0,245,255,0.06);box-shadow:0 0 20px rgba(0,245,255,0.12);transform:translateY(-2px)}
+.btn-outline:active{transform:translateY(0) scale(0.97)}
+.btn-outline:disabled{opacity:0.35;cursor:not-allowed;transform:none;box-shadow:none}
+.btn-outline::before{content:'';position:absolute;top:0;left:-100%;width:60%;height:100%;background:linear-gradient(90deg,transparent,rgba(0,245,255,0.08),transparent)}
+.btn-outline:hover::before{animation:shimmer 0.8s ease forwards}
+
+.btn-violet{border-color:var(--violet);color:var(--violet);background:rgba(123,47,255,0.04)}
+.btn-violet:hover{background:rgba(123,47,255,0.1);box-shadow:0 0 20px rgba(123,47,255,0.15)}
+
+/* Chips */
+.chip-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.chip input[type="checkbox"]{display:none}
+.chip label{display:block;text-align:center;padding:8px 4px;border-radius:8px;border:1px solid rgba(255,255,255,0.08);color:rgba(255,255,255,0.3);font-family:'Space Mono',monospace;font-size:11px;cursor:pointer;transition:all 0.25s;user-select:none;position:relative}
+.chip label:hover{border-color:rgba(0,245,255,0.25);color:rgba(255,255,255,0.5)}
+.chip input:checked+label{border-color:var(--cyan);color:var(--cyan);box-shadow:0 0 12px rgba(0,245,255,0.1);background:rgba(0,245,255,0.04)}
+.chip label .chip-tooltip{position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%) scale(0.9);background:#0a1628;border:1px solid rgba(0,245,255,0.15);color:var(--cyan);font-size:9px;padding:4px 10px;border-radius:6px;white-space:nowrap;opacity:0;pointer-events:none;transition:opacity 0.2s,transform 0.2s}
+.chip label:hover .chip-tooltip{opacity:1;transform:translateX(-50%) scale(1)}
+
+/* Progress bar */
+.progress-wrap{display:none;margin:16px 0}
+.progress-wrap.visible{display:block}
+.progress-info{display:flex;justify-content:space-between;font-size:11px;margin-bottom:6px;font-family:'Space Mono',monospace;color:rgba(0,245,255,0.6)}
+.progress-track{width:100%;height:4px;border-radius:4px;background:rgba(255,255,255,0.05);overflow:hidden}
+.progress-fill{height:100%;width:0%;border-radius:4px;background:linear-gradient(90deg,var(--blue),var(--cyan));box-shadow:0 0 10px rgba(0,245,255,0.3);transition:width 0.4s ease}
+
+/* Log terminal */
+.log-header{display:flex;justify-content:space-between;align-items:center;padding:14px 18px;border-bottom:1px solid rgba(255,255,255,0.04)}
+.log-title{font-family:'Space Mono',monospace;font-size:12px;color:var(--cyan);letter-spacing:1px}
+.log-clear{background:none;border:1px solid rgba(255,255,255,0.08);color:rgba(255,255,255,0.25);font-size:10px;padding:4px 12px;border-radius:6px;cursor:pointer;font-family:'Space Mono',monospace;transition:all 0.2s}
+.log-clear:hover{border-color:var(--red);color:var(--red)}
+.log-body{padding:12px 18px;max-height:200px;overflow-y:auto;font-family:'Space Mono',monospace;font-size:11px;line-height:1.7}
+.log-entry{animation:log-slide 0.3s ease forwards;opacity:0;transform:translateX(-12px)}
+@keyframes log-slide{to{opacity:1;transform:translateX(0)}}
+.log-entry .log-ts{color:rgba(255,255,255,0.15);margin-right:8px}
+.log-entry.info .log-msg{color:rgba(255,255,255,0.55)}
+.log-entry.success .log-msg{color:var(--green)}
+.log-entry.error .log-msg{color:var(--red)}
+.log-entry.loading .log-msg{color:var(--amber)}
+.log-placeholder{color:rgba(255,255,255,0.12);font-style:italic}
+
+/* Terminate link */
+.terminate-link{display:inline-block;margin-top:20px;font-size:11px;font-family:'Space Mono',monospace;color:rgba(255,255,255,0.2);cursor:pointer;border:none;background:none;transition:color 0.25s;text-decoration:none;letter-spacing:0.5px}
+.terminate-link:hover{color:var(--red)}
+
+/* Panel header */
+.panel-header{display:flex;align-items:center;gap:10px;padding:18px 20px;border-bottom:1px solid rgba(255,255,255,0.04)}
+.panel-icon{font-size:16px}
+.panel-title{font-family:'Orbitron',sans-serif;font-size:13px;font-weight:700;color:#e8ecf0;letter-spacing:0.5px;flex:1}
+.panel-step{font-family:'Space Mono',monospace;font-size:10px;color:rgba(0,245,255,0.4);letter-spacing:1px}
+.panel-body{padding:24px 20px}
+
+/* Spinner */
+.spinner{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,0.3);border-top-color:#fff;border-radius:50%;animation:spin 0.6s linear infinite;vertical-align:middle;margin-right:8px}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* Entry animations */
+.fade-down{opacity:0;transform:translateY(-20px);animation:fadeDown 0.6s ease forwards}
+.fade-up{opacity:0;transform:translateY(20px)}
+.fade-up.visible{animation:fadeUp 0.5s ease forwards}
+@keyframes fadeDown{to{opacity:1;transform:translateY(0)}}
+@keyframes fadeUp{to{opacity:1;transform:translateY(0)}}
+
+/* Responsive */
+@media(max-width:480px){
+.ui-layer{padding:24px 12px 48px}
+.chip-grid{grid-template-columns:repeat(3,1fr)}
+.stepper{gap:0}
+.step-label{font-size:8px}
+.step-circle{width:30px;height:30px;font-size:11px}
+}
+</style>
 </head>
 <body>
-    <h1>PESU Academy Content Downloader</h1>
+
+<canvas id="bg-canvas"></canvas>
+
+<div class="ui-layer">
+
+  <!-- HEADER -->
+  <header class="text-center fade-down" style="animation-delay:0.1s">
+    <div class="pill-badge mx-auto mb-5">
+      <span class="pulse-dot"></span>
+      <span>PES University — Automation Tool</span>
+    </div>
+    <h1 class="font-orbitron text-5xl font-black gradient-text leading-tight tracking-wide">PESU VAULT</h1>
+    <p class="font-space text-xs mt-3" style="color:rgba(0,245,255,0.35);letter-spacing:2px">Course Content Downloader / v1.0</p>
+  </header>
+
+  <!-- PHASE STEPPER -->
+  <nav class="stepper fade-up" id="stepper" style="animation-delay:0.25s">
+    <div class="step active" data-step="1">
+      <div class="step-circle">1</div>
+      <span class="step-label">Auth</span>
+    </div>
+    <div class="step" data-step="2">
+      <div class="step-circle">2</div>
+      <span class="step-label">Navigate</span>
+    </div>
+    <div class="step" data-step="3">
+      <div class="step-circle">3</div>
+      <span class="step-label">Select</span>
+    </div>
+    <div class="step" data-step="4">
+      <div class="step-circle">4</div>
+      <span class="step-label">Download</span>
+    </div>
+  </nav>
+
+  <!-- MAIN GLASS CARD -->
+  <main class="glass-card fade-up" id="mainCard" style="animation-delay:0.4s">
+
+    <div class="panel-header">
+      <span class="panel-icon" id="panelIcon">&#128274;</span>
+      <span class="panel-title" id="panelTitle">Authentication</span>
+      <span class="panel-step" id="panelStep">STEP 1/4</span>
+    </div>
+
+    <div class="panel-body">
+
+      <!-- PHASE 1: Login -->
+      <div id="phase-login">
+        <div class="mb-4">
+          <label class="input-label" for="inp-user">SRN / Username</label>
+          <input type="text" id="inp-user" class="input-field" placeholder="e.g. PES1UG22CS001" autocomplete="username">
+        </div>
+        <div class="mb-5">
+          <label class="input-label" for="inp-pass">Password</label>
+          <input type="password" id="inp-pass" class="input-field" placeholder="&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;" autocomplete="current-password">
+        </div>
+        <button class="btn-primary" id="btn-login">Initialize Session</button>
+      </div>
+
+      <!-- PHASE 2-3-4: Navigation & Download -->
+      <div id="phase-nav" style="display:none">
+
+        <!-- Dropdowns row -->
+        <div class="grid grid-cols-2 gap-3 mb-3">
+          <div>
+            <label class="input-label">Semester</label>
+            <select class="input-field" id="sel-semester"><option value="">&#8212;</option></select>
+          </div>
+          <div>
+            <label class="input-label">Subject</label>
+            <select class="input-field" id="sel-subject"><option value="">&#8212;</option></select>
+          </div>
+        </div>
+        <div class="mb-5">
+          <label class="input-label">Unit</label>
+          <select class="input-field" id="sel-unit"><option value="">&#8212;</option></select>
+        </div>
+
+        <!-- Content chips -->
+        <label class="input-label mb-2" style="margin-bottom:8px">Content Types</label>
+        <div class="chip-grid mb-5">
+          <div class="chip"><input type="checkbox" id="ct-slides" value="Slides" checked><label for="ct-slides">Slides<span class="chip-tooltip">Lecture Slides</span></label></div>
+          <div class="chip"><input type="checkbox" id="ct-notes" value="Notes" checked><label for="ct-notes">Notes<span class="chip-tooltip">Lecture Notes</span></label></div>
+          <div class="chip"><input type="checkbox" id="ct-assign" value="Assignments"><label for="ct-assign">Assign<span class="chip-tooltip">Assignments</span></label></div>
+          <div class="chip"><input type="checkbox" id="ct-qb" value="QB"><label for="ct-qb">QB<span class="chip-tooltip">Question Bank</span></label></div>
+          <div class="chip"><input type="checkbox" id="ct-qa" value="QA"><label for="ct-qa">QA<span class="chip-tooltip">Question Answers</span></label></div>
+          <div class="chip"><input type="checkbox" id="ct-mcqs" value="MCQs"><label for="ct-mcqs">MCQs<span class="chip-tooltip">Multiple Choice Qs</span></label></div>
+          <div class="chip"><input type="checkbox" id="ct-refs" value="References"><label for="ct-refs">Refs<span class="chip-tooltip">References</span></label></div>
+        </div>
+
+        <!-- Progress -->
+        <div class="progress-wrap" id="progress-wrap">
+          <div class="progress-info">
+            <span id="progress-label">Preparing...</span>
+            <span id="progress-pct">0%</span>
+          </div>
+          <div class="progress-track"><div class="progress-fill" id="progress-fill"></div></div>
+        </div>
+
+        <!-- Action buttons -->
+        <div class="flex gap-3 mt-1">
+          <button class="btn-outline" id="btn-selective" onclick="handleDownload('selective')">&#11015; Download Selected</button>
+          <button class="btn-outline btn-violet" id="btn-full" onclick="handleDownload('full')">&#9889; Full Unit</button>
+        </div>
+
+        <!-- Terminate -->
+        <div class="text-center">
+          <button class="terminate-link" id="btn-terminate" onclick="terminateSession()">&#10005; Terminate Session</button>
+        </div>
+      </div>
+
+    </div>
+  </main>
+
+  <!-- LOG TERMINAL -->
+  <div class="glass-card mt-5 fade-up" id="logCard" style="animation-delay:0.55s">
+    <div class="log-header">
+      <span class="log-title">&#9654; System Log</span>
+      <button class="log-clear" onclick="clearLog()">CLEAR</button>
+    </div>
+    <div class="log-body" id="log-body">
+      <div class="log-placeholder" id="log-placeholder">Awaiting initialization...</div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+/* ═══════════════════════════════════════════
+   THREE.JS 3D BACKGROUND
+   ═══════════════════════════════════════════ */
+(function(){
+const canvas=document.getElementById('bg-canvas');
+const renderer=new THREE.WebGLRenderer({canvas:canvas,alpha:true,antialias:false});
+renderer.setPixelRatio(Math.min(window.devicePixelRatio,2));
+renderer.setSize(window.innerWidth,window.innerHeight);
+
+const scene=new THREE.Scene();
+const camera=new THREE.PerspectiveCamera(60,window.innerWidth/window.innerHeight,0.1,1000);
+camera.position.z=30;
+
+const mouse={x:0,y:0,tx:0,ty:0};
+document.addEventListener('mousemove',function(e){mouse.tx=(e.clientX/window.innerWidth-0.5)*2;mouse.ty=(e.clientY/window.innerHeight-0.5)*2});
+
+/* Particles */
+var PARTICLE_COUNT=180;
+var pGeo=new THREE.BufferGeometry();
+var positions=new Float32Array(PARTICLE_COUNT*3);
+var velocities=[];
+for(var i=0;i<PARTICLE_COUNT;i++){
+  positions[i*3]=(Math.random()-0.5)*50;
+  positions[i*3+1]=(Math.random()-0.5)*40;
+  positions[i*3+2]=(Math.random()-0.5)*30;
+  velocities.push({x:(Math.random()-0.5)*0.04,y:(Math.random()-0.5)*0.04,z:(Math.random()-0.5)*0.02});
+}
+pGeo.setAttribute('position',new THREE.BufferAttribute(positions,3));
+var pMat=new THREE.PointsMaterial({color:0x00f5ff,size:0.18,transparent:true,opacity:0.7,blending:THREE.AdditiveBlending,depthWrite:false});
+var particles=new THREE.Points(pGeo,pMat);
+scene.add(particles);
+
+/* Connection lines */
+var MAX_DIST=14;
+var lineGeo=new THREE.BufferGeometry();
+var linePositions=new Float32Array(PARTICLE_COUNT*PARTICLE_COUNT*6);
+lineGeo.setAttribute('position',new THREE.BufferAttribute(linePositions,3));
+var lineMat=new THREE.LineBasicMaterial({color:0x0066ff,transparent:true,opacity:0.08,blending:THREE.AdditiveBlending,depthWrite:false});
+var lines=new THREE.LineSegments(lineGeo,lineMat);
+scene.add(lines);
+
+/* Torus rings */
+function makeTorus(radius,tube,color){
+  var g=new THREE.TorusGeometry(radius,tube,16,80);
+  var m=new THREE.MeshBasicMaterial({color:color,wireframe:true,transparent:true,opacity:0.12,blending:THREE.AdditiveBlending});
+  return new THREE.Mesh(g,m);
+}
+var t1=makeTorus(10,0.15,0x00f5ff);
+var t2=makeTorus(14,0.12,0x0066ff);t2.rotation.x=Math.PI/3;
+var t3=makeTorus(7,0.1,0x7b2fff);t3.rotation.y=Math.PI/4;
+scene.add(t1);scene.add(t2);scene.add(t3);
+
+var frame=0;
+function animate(){
+  requestAnimationFrame(animate);
+  frame++;
+  mouse.x+=(mouse.tx-mouse.x)*0.04;
+  mouse.y+=(mouse.ty-mouse.y)*0.04;
+
+  var pos=pGeo.attributes.position.array;
+  for(var i=0;i<PARTICLE_COUNT;i++){
+    var ix=i*3,iy=i*3+1,iz=i*3+2;
+    var v=velocities[i];
+    /* Mouse attraction */
+    var dx=mouse.x*25-pos[ix],dy=-mouse.y*20-pos[iy];
+    var dist=Math.sqrt(dx*dx+dy*dy);
+    if(dist<18){v.x+=dx*0.00008;v.y+=dy*0.00008}
+    pos[ix]+=v.x;pos[iy]+=v.y;pos[iz]+=v.z;
+    /* Bounce */
+    if(pos[ix]>25||pos[ix]<-25)v.x*=-1;
+    if(pos[iy]>20||pos[iy]<-20)v.y*=-1;
+    if(pos[iz]>15||pos[iz]<-15)v.z*=-1;
+  }
+  pGeo.attributes.position.needsUpdate=true;
+
+  /* Lines every 3 frames */
+  if(frame%3===0){
+    var idx=0;
+    for(var i=0;i<PARTICLE_COUNT;i++){
+      for(var j=i+1;j<PARTICLE_COUNT;j++){
+        var dx=pos[i*3]-pos[j*3],dy=pos[i*3+1]-pos[j*3+1],dz=pos[i*3+2]-pos[j*3+2];
+        var d=dx*dx+dy*dy+dz*dz;
+        if(d<MAX_DIST*MAX_DIST){
+          linePositions[idx++]=pos[i*3];linePositions[idx++]=pos[i*3+1];linePositions[idx++]=pos[i*3+2];
+          linePositions[idx++]=pos[j*3];linePositions[idx++]=pos[j*3+1];linePositions[idx++]=pos[j*3+2];
+        }
+      }
+    }
+    for(var k=idx;k<linePositions.length;k++)linePositions[k]=0;
+    lineGeo.attributes.position.needsUpdate=true;
+    lineGeo.setDrawRange(0,idx/3);
+  }
+
+  /* Torus rotation */
+  var t=frame*0.003;
+  t1.rotation.x=t*0.3+mouse.y*0.3;t1.rotation.y=t*0.5+mouse.x*0.3;
+  t2.rotation.x=Math.PI/3+t*0.2-mouse.y*0.2;t2.rotation.z=t*0.4+mouse.x*0.2;
+  t3.rotation.y=Math.PI/4+t*0.6+mouse.x*0.25;t3.rotation.x=t*0.35-mouse.y*0.25;
+
+  /* Camera parallax */
+  camera.position.x+=(mouse.x*3-camera.position.x)*0.02;
+  camera.position.y+=(-mouse.y*2-camera.position.y)*0.02;
+  camera.lookAt(scene.position);
+
+  renderer.render(scene,camera);
+}
+animate();
+
+window.addEventListener('resize',function(){
+  camera.aspect=window.innerWidth/window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth,window.innerHeight);
+});
+})();
+
+/* ═══════════════════════════════════════════
+   STATE
+   ═══════════════════════════════════════════ */
+var SESSION_ID=null;
+var currentPhase=1;
+var downloading=false;
+var progressTimer=null;
+
+/* Semester / subject / unit data caches */
+var semestersData=[];
+var subjectsData=[];
+var unitsData=[];
+
+/* ═══════════════════════════════════════════
+   LOGGING
+   ═══════════════════════════════════════════ */
+var logBody=document.getElementById('log-body');
+var logPlaceholder=document.getElementById('log-placeholder');
+
+function log(message,type){
+  type=type||'info';
+  if(logPlaceholder)logPlaceholder.style.display='none';
+  var entry=document.createElement('div');
+  entry.className='log-entry '+type;
+  var now=new Date();
+  var ts=String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0')+':'+String(now.getSeconds()).padStart(2,'0');
+  entry.innerHTML='<span class="log-ts">['+ts+']</span><span class="log-msg">'+message+'</span>';
+  logBody.appendChild(entry);
+  logBody.scrollTop=logBody.scrollHeight;
+}
+function clearLog(){
+  logBody.innerHTML='<div class="log-placeholder" id="log-placeholder">Awaiting initialization...</div>';
+  logPlaceholder=document.getElementById('log-placeholder');
+}
+
+/* ═══════════════════════════════════════════
+   PHASE STEPPER
+   ═══════════════════════════════════════════ */
+var panelMeta=[
+  {icon:'\uD83D\uDD10',title:'Authentication',step:'STEP 1/4'},
+  {icon:'\uD83E\uDDED',title:'Navigation',step:'STEP 2/4'},
+  {icon:'\uD83D\uDCE6',title:'Content Selection',step:'STEP 3/4'},
+  {icon:'\u2B07',title:'Downloading',step:'STEP 4/4'}
+];
+
+function setPhase(n){
+  currentPhase=n;
+  var steps=document.querySelectorAll('.step');
+  steps.forEach(function(s,i){
+    var num=i+1;
+    s.classList.remove('active','completed');
+    if(num<n)s.classList.add('completed');
+    else if(num===n)s.classList.add('active');
+  });
+  var m=panelMeta[n-1];
+  document.getElementById('panelIcon').textContent=m.icon;
+  document.getElementById('panelTitle').textContent=m.title;
+  document.getElementById('panelStep').textContent=m.step;
+}
+
+/* ═══════════════════════════════════════════
+   PROGRESS
+   ═══════════════════════════════════════════ */
+function setProgress(percent,label){
+  var wrap=document.getElementById('progress-wrap');
+  wrap.classList.add('visible');
+  document.getElementById('progress-label').textContent=label||'';
+  document.getElementById('progress-pct').textContent=Math.round(percent)+'%';
+  document.getElementById('progress-fill').style.width=percent+'%';
+  if(progressTimer)clearTimeout(progressTimer);
+  if(percent>=100){
+    progressTimer=setTimeout(function(){wrap.classList.remove('visible')},2000);
+  }
+}
+
+/* ═══════════════════════════════════════════
+   API HELPERS
+   ═══════════════════════════════════════════ */
+async function api(endpoint,body){
+  var res=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  var data=await res.json();
+  if(!res.ok||data.status==='error')throw new Error(data.message||'Request failed');
+  return data;
+}
+
+/* ═══════════════════════════════════════════
+   LOGIN
+   ═══════════════════════════════════════════ */
+var btnLogin=document.getElementById('btn-login');
+var inpUser=document.getElementById('inp-user');
+var inpPass=document.getElementById('inp-pass');
+
+inpPass.addEventListener('keydown',function(e){if(e.key==='Enter')doLogin()});
+btnLogin.addEventListener('click',doLogin);
+
+async function doLogin(){
+  var username=inpUser.value.trim();
+  var password=inpPass.value;
+  if(!username||!password){log('Please enter both SRN and password.','error');return}
+  btnLogin.disabled=true;
+  btnLogin.innerHTML='<span class="spinner"></span>Connecting...';
+  log('Initiating session for '+username+'...','loading');
+  try{
+    var data=await api('/login',{username:username,password:password});
+    SESSION_ID=data.session_id;
+    log('Session established: '+SESSION_ID.slice(0,8)+'...','success');
+    document.getElementById('phase-login').style.display='none';
+    document.getElementById('phase-nav').style.display='block';
+    setPhase(2);
+    fetchSemesters();
+  }catch(err){
+    log('Login failed \u2014 '+err.message,'error');
+    btnLogin.disabled=false;
+    btnLogin.textContent='Initialize Session';
+  }
+}
+
+/* ═══════════════════════════════════════════
+   FETCH SEMESTERS
+   ═══════════════════════════════════════════ */
+async function fetchSemesters(){
+  log('Fetching semesters...','loading');
+  try{
+    var data=await api('/fetch_semesters',{session_id:SESSION_ID});
+    semestersData=data.semesters||[];
+    var sel=document.getElementById('sel-semester');
+    sel.innerHTML='<option value="">Select semester</option>';
+    semestersData.forEach(function(s){
+      var o=document.createElement('option');o.value=s.value;o.textContent=s.label;sel.appendChild(o);
+    });
+    log('Loaded '+semestersData.length+' semester(s).','success');
+  }catch(err){log('Failed to fetch semesters \u2014 '+err.message,'error')}
+}
+
+/* ═══════════════════════════════════════════
+   FETCH SUBJECTS
+   ═══════════════════════════════════════════ */
+document.getElementById('sel-semester').addEventListener('change',async function(){
+  var v=this.value;
+  var selSubject=document.getElementById('sel-subject');
+  var selUnit=document.getElementById('sel-unit');
+  selSubject.innerHTML='<option value="">\u2014</option>';
+  selUnit.innerHTML='<option value="">\u2014</option>';
+  subjectsData=[];unitsData=[];
+  if(!v)return;
+  log('Fetching subjects for semester...','loading');
+  try{
+    var data=await api('/fetch_subjects',{session_id:SESSION_ID,semester_value:v});
+    subjectsData=data.subjects||[];
+    selSubject.innerHTML='<option value="">Select subject</option>';
+    subjectsData.forEach(function(s){
+      var o=document.createElement('option');o.value=s.id;o.textContent=s.name;selSubject.appendChild(o);
+    });
+    log('Loaded '+subjectsData.length+' subject(s).','success');
+  }catch(err){log('Failed to fetch subjects \u2014 '+err.message,'error')}
+});
+
+/* ═══════════════════════════════════════════
+   FETCH UNITS
+   ═══════════════════════════════════════════ */
+document.getElementById('sel-subject').addEventListener('change',async function(){
+  var v=this.value;
+  var selUnit=document.getElementById('sel-unit');
+  selUnit.innerHTML='<option value="">\u2014</option>';
+  unitsData=[];
+  if(!v)return;
+  log('Fetching units...','loading');
+  try{
+    var data=await api('/fetch_units',{session_id:SESSION_ID,subject_id:v});
+    unitsData=data.units||[];
+    selUnit.innerHTML='<option value="">Select unit</option>';
+    unitsData.forEach(function(u){
+      var o=document.createElement('option');o.value=u.id;o.textContent=u.name;selUnit.appendChild(o);
+    });
+    log('Loaded '+unitsData.length+' unit(s).','success');
+    setPhase(3);
+  }catch(err){log('Failed to fetch units \u2014 '+err.message,'error')}
+});
+
+/* ═══════════════════════════════════════════
+   DOWNLOAD
+   ═══════════════════════════════════════════ */
+async function handleDownload(mode){
+  if(downloading)return;
+  var subjectSel=document.getElementById('sel-subject');
+  var unitSel=document.getElementById('sel-unit');
+  var subjectName=(subjectSel.options[subjectSel.selectedIndex]||{}).text||'';
+  var unitId=unitSel.value;
+  var unitName=(unitSel.options[unitSel.selectedIndex]||{}).text||'';
+
+  if(!unitId){log('Please select a unit first.','error');return}
+
+  var contentTypes=[];
+  if(mode==='selective'){
+    document.querySelectorAll('.chip input:checked').forEach(function(c){contentTypes.push(c.value)});
+    if(!contentTypes.length){log('Select at least one content type.','error');return}
+  }
+
+  downloading=true;
+  document.getElementById('btn-selective').disabled=true;
+  document.getElementById('btn-full').disabled=true;
+  setPhase(4);
+  setProgress(10,'Extracting links...');
+  log('Starting '+mode+' download for "'+unitName+'"...','loading');
+
+  try{
+    setProgress(40,'Downloading files...');
+    var data=await api('/download',{session_id:SESSION_ID,subject_name:subjectName,unit_id:unitId,unit_name:unitName,content_types:contentTypes,mode:mode});
+    var s=data.summary||{};
+    setProgress(100,'Complete');
+    log('Download complete \u2014 '+(s.downloaded||0)+' downloaded, '+(s.skipped||0)+' skipped, '+(s.failed||0)+' failed.','success');
+  }catch(err){
+    setProgress(0,'');
+    log('Download failed \u2014 '+err.message,'error');
+  }finally{
+    downloading=false;
+    document.getElementById('btn-selective').disabled=false;
+    document.getElementById('btn-full').disabled=false;
+  }
+}
+
+/* ═══════════════════════════════════════════
+   TERMINATE
+   ═══════════════════════════════════════════ */
+async function terminateSession(){
+  if(!SESSION_ID)return;
+  log('Terminating session...','loading');
+  try{await fetch('/logout',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:SESSION_ID})})}catch(e){}
+  SESSION_ID=null;
+  document.getElementById('phase-nav').style.display='none';
+  document.getElementById('phase-login').style.display='block';
+  btnLogin.disabled=false;btnLogin.textContent='Initialize Session';
+  inpUser.value='';inpPass.value='';
+  document.getElementById('sel-semester').innerHTML='<option value="">\u2014</option>';
+  document.getElementById('sel-subject').innerHTML='<option value="">\u2014</option>';
+  document.getElementById('sel-unit').innerHTML='<option value="">\u2014</option>';
+  document.getElementById('progress-wrap').classList.remove('visible');
+  setPhase(1);
+  log('Session terminated. Ready for re-authentication.','info');
+}
+
+/* ═══════════════════════════════════════════
+   INIT
+   ═══════════════════════════════════════════ */
+document.addEventListener('DOMContentLoaded',function(){
+  /* Trigger fade-up animations */
+  document.querySelectorAll('.fade-up').forEach(function(el,i){
+    setTimeout(function(){el.classList.add('visible')},parseFloat(el.style.animationDelay||0)*1000||i*150);
+  });
+  log('PESU Vault initialized. Ready for authentication.','info');
+});
+</script>
 </body>
 </html>

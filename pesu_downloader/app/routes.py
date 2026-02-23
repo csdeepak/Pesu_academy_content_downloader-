@@ -9,6 +9,10 @@ from pydantic import BaseModel
 from session_manager import create_session, get_session, close_session
 from automation.login import login
 from automation.navigator import get_semesters, get_subjects, get_units
+from automation.extractor import extract_links
+from automation.downloader import download_files
+
+ALL_CONTENT_TYPES = ["Slides", "Notes", "Assignments", "QB", "QA", "MCQs", "References"]
 
 router = APIRouter()
 
@@ -33,6 +37,15 @@ class SemesterSubjectsRequest(BaseModel):
 class SubjectUnitsRequest(BaseModel):
     session_id: str
     subject_id: str
+
+
+class DownloadRequest(BaseModel):
+    session_id: str
+    subject_name: str
+    unit_id: str
+    unit_name: str
+    content_types: list[str] = []
+    mode: str = "selective"
 
 
 @router.get("/")
@@ -136,6 +149,44 @@ async def fetch_units_endpoint(body: SubjectUnitsRequest):
         page = session["page"]
         units = await get_units(page, body.subject_id)
         return {"status": "success", "units": units}
+
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": str(e)},
+        )
+
+
+@router.post("/download")
+async def download_endpoint(body: DownloadRequest):
+    """Extract links from a unit and download the files."""
+    try:
+        session = await get_session(body.session_id)
+        if session is None:
+            return JSONResponse(
+                status_code=404,
+                content={"status": "error", "message": "Session not found"},
+            )
+
+        page = session["page"]
+
+        # Determine content types
+        content_types = (
+            ALL_CONTENT_TYPES if body.mode == "full" else body.content_types
+        )
+        if not content_types:
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "message": "No content types specified"},
+            )
+
+        # Extract links
+        extracted = await extract_links(page, body.unit_id, content_types)
+
+        # Download files
+        summary = await download_files(extracted, body.subject_name, body.unit_name)
+
+        return {"status": "success", "summary": summary}
 
     except Exception as e:
         return JSONResponse(

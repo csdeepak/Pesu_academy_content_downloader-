@@ -13,6 +13,7 @@ Real page structure (discovered via inspection):
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from playwright.async_api import Page, TimeoutError as PlaywrightTimeout
@@ -40,9 +41,22 @@ async def go_to_my_courses(page: Page) -> None:
     )
     # Let the AJAX content settle
     try:
-        await page.wait_for_load_state("networkidle", timeout=10_000)
+        await page.wait_for_load_state("networkidle", timeout=8_000)
     except PlaywrightTimeout:
         pass
+
+    # The semester dropdown may appear before course rows are loaded.
+    # Wait explicitly for at least one course row to show up.
+    try:
+        await page.wait_for_selector(
+            "tr[id^='rowWiseCourseContent_']",
+            state="visible", timeout=8_000,
+        )
+    except PlaywrightTimeout:
+        # Course rows didn't appear — possibly needs a semester to be selected,
+        # or they're still loading.  Give extra time.
+        logger.warning("No course rows yet — waiting a bit longer…")
+        await asyncio.sleep(2)
 
     logger.info("My Courses page loaded.")
 
@@ -63,24 +77,47 @@ async def get_courses(page: Page) -> list[dict]:
     """
     logger.info("Scraping course list…")
 
-    courses: list[dict] = await page.evaluate("""() => {
-        // The rows are <tr id="rowWiseCourseContent_21631" onclick="clickOnCourseContent('21631', event)">
-        const rows = document.querySelectorAll("tr[id^='rowWiseCourseContent_']");
-        return Array.from(rows).map(row => {
-            // Extract subject ID from the row id: rowWiseCourseContent_21631 → 21631
-            const sid = row.id.replace('rowWiseCourseContent_', '');
-            const cells = row.querySelectorAll('td');
-            let code = '', title = '';
-            if (cells.length >= 2) {
-                code  = (cells[0].innerText || '').trim();
-                title = (cells[1].innerText || '').trim();
-            }
-            const display = code && title ? code + ' \u2014 ' + title : (title || code);
-            return { id: sid, name: display };
-        });
-    }""")
+    # Retry up to 3 times (AJAX may still be loading)
+    for attempt in range(3):
+        courses: list[dict] = await page.evaluate("""() => {
+            const rows = document.querySelectorAll("tr[id^='rowWiseCourseContent_']");
+            return Array.from(rows).map(row => {
+                const sid = row.id.replace('rowWiseCourseContent_', '');
+                const cells = row.querySelectorAll('td');
+                let code = '', title = '';
+                if (cells.length >= 2) {
+                    code  = (cells[0].innerText || '').trim();
+                    title = (cells[1].innerText || '').trim();
+                }
+                const display = code && title ? code + ' \u2014 ' + title : (title || code);
+                return { id: sid, name: display };
+            });
+        }""")
 
-    courses = [c for c in courses if c.get("name")]
+        courses = [c for c in courses if c.get("name")]
+        if courses:
+            break
+        logger.warning("Attempt %d: 0 courses found, waiting 2s…", attempt + 1)
+
+        # Log what we DO see on the page for diagnostics
+        if attempt == 0:
+            diag = await page.evaluate("""() => {
+                const url = window.location.href;
+                const semSel = document.querySelector('select#semesters');
+                const semVal = semSel ? semSel.value : 'N/A';
+                const semOpts = semSel ? Array.from(semSel.options).map(o => o.text) : [];
+                const divs = document.querySelectorAll("div[id^='rowWiseCourseContent_']");
+                const trs = document.querySelectorAll("tr[id^='rowWiseCourseContent_']");
+                const tables = document.querySelectorAll("table");
+                return {
+                    url, semVal, semOpts: semOpts.slice(0, 10),
+                    divCount: divs.length, trCount: trs.length, tableCount: tables.length,
+                    bodySnippet: document.body.innerText.substring(0, 500)
+                };
+            }""")
+            logger.info("Page diagnostics: %s", diag)
+
+        await asyncio.sleep(2)
     logger.info("Found %d course(s).", len(courses))
     for c in courses:
         logger.debug("  • %s", c['name'])
@@ -100,46 +137,57 @@ async def get_units(page: Page, course_id: str) -> list[dict]:
 
     Returns [{"id": "0", "name": "Introduction to Deep Learning"}, …]
     """
-    logger.info("Clicking course '%s'…", course_id)
+    logger.info("Loading units for course '%s'…", course_id)
 
-    # Call the site's own JS function to open the course detail
-    try:
-        await page.evaluate(f"clickOnCourseContent('{course_id}', new Event('click'))")
-        logger.info("Called clickOnCourseContent('%s').", course_id)
-    except Exception as e:
-        logger.warning("JS call failed (%s), trying row click…", e)
-        try:
-            row = page.locator(f"#rowWiseCourseContent_{course_id}")
-            await row.click()
-        except Exception as e2:
-            logger.error("Row click also failed: %s", e2)
+    # ── Step 0: Make sure we're on the My Courses page ──
+    # If the course row doesn't exist in the DOM, we're on a different page
+    # (e.g. a previously-selected course detail). Navigate back first.
+    row_exists = await page.evaluate(
+        f"!!document.getElementById('rowWiseCourseContent_{course_id}')"
+    )
+    if not row_exists:
+        logger.info("Course row not in DOM — navigating back to My Courses…")
+        await go_to_my_courses(page)
+        # Re-check after navigating
+        row_exists = await page.evaluate(
+            f"!!document.getElementById('rowWiseCourseContent_{course_id}')"
+        )
+        if not row_exists:
+            logger.error("Course row still not found after navigating to My Courses!")
+            return []
 
-    # Wait for the course detail page to load (Level-1 tabs)
-    logger.info("Waiting for course detail page…")
-    try:
-        await page.wait_for_load_state("networkidle", timeout=15_000)
-    except PlaywrightTimeout:
-        pass
+    # ── Step 1: Click the course row using Playwright's real mouse click ──
+    # Playwright's locator.click() dispatches a real mouse event at the center
+    # of the element, hitting a <td> inside the <tr>.  This gives the site's
+    # clickOnCourseContent() a proper event.target with a tagName.
+    logger.info("Clicking course row '%s'…", course_id)
+    row = page.locator(f"#rowWiseCourseContent_{course_id}")
+    await row.click(timeout=5_000)
 
-    # Click the "Course Units" tab (Level-1)
-    logger.info("Looking for 'Course Units' tab…")
-    course_units_tab = page.locator("a:has-text('Course Units'), li:has-text('Course Units') a").first
-    try:
-        await course_units_tab.wait_for(state="visible", timeout=10_000)
-        await course_units_tab.click()
-        logger.info("Clicked 'Course Units' tab.")
-    except PlaywrightTimeout:
-        logger.info("'Course Units' tab not found – may already be active.")
-
-    # Wait for Level-2 unit tabs to appear
+    # Wait for the course detail page to load
+    await asyncio.sleep(1.5)
     try:
         await page.wait_for_load_state("networkidle", timeout=10_000)
     except PlaywrightTimeout:
         pass
 
-    # Scrape all Level-2 unit tabs from ul#courselistunit
-    # This is the specific container inside the "Course Units" tab pane (#course_3)
-    # Each tab: <a data-toggle="tab" href="#courseUnit_65658" onclick="handleclassUnit('65658')">
+    # ── Step 2: Click the "Course Units" tab (Level-1) ──
+    course_units_tab = page.locator("a:has-text('Course Units'), li:has-text('Course Units') a").first
+    try:
+        await course_units_tab.wait_for(state="visible", timeout=5_000)
+        await course_units_tab.click()
+        logger.info("Clicked 'Course Units' tab.")
+    except PlaywrightTimeout:
+        logger.info("'Course Units' tab not found – may already be active.")
+
+    # Wait for the unit tabs to appear
+    try:
+        await page.wait_for_selector("#courselistunit", state="visible", timeout=8_000)
+    except PlaywrightTimeout:
+        pass
+    await asyncio.sleep(0.5)
+
+    # ── Step 3: Scrape all Level-2 unit tabs from ul#courselistunit ──
     units: list[dict] = await page.evaluate("""() => {
         const unitList = document.getElementById('courselistunit');
         if (!unitList) return [];
@@ -186,8 +234,9 @@ async def click_unit(page: Page, unit_index: int) -> dict:
         return {}
 
     # Wait for the content table to appear
+    await asyncio.sleep(0.5)
     try:
-        await page.wait_for_load_state("networkidle", timeout=10_000)
+        await page.wait_for_load_state("networkidle", timeout=6_000)
     except PlaywrightTimeout:
         pass
 

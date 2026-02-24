@@ -16,9 +16,10 @@ from playwright.async_api import async_playwright
 
 logger = logging.getLogger(__name__)
 
-# Whether to run the browser in headless mode (default: True for production).
-# Set HEADLESS=false in environment to see the browser window.
-HEADLESS = os.getenv("HEADLESS", "true").lower() in ("true", "1", "yes")
+# Whether to run the browser in headless mode.
+# Default: false (PESU Academy's AJAX-heavy pages work best with a visible browser).
+# Set HEADLESS=true in environment for Docker / server deployments.
+HEADLESS = os.getenv("HEADLESS", "false").lower() in ("true", "1", "yes")
 
 # ---------------------------------------------------------------------------
 # Dedicated Playwright event-loop (runs in its own daemon thread)

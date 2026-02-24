@@ -4,6 +4,7 @@ downloader.py — Download extracted files to the local filesystem.
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 from pathlib import Path
@@ -11,6 +12,8 @@ from urllib.parse import unquote, urlparse
 
 import aiohttp
 import yarl
+
+logger = logging.getLogger(__name__)
 
 # Root downloads directory — uses the system's default Downloads folder
 DOWNLOADS_DIR = Path.home() / "Downloads" / "PESU_Downloads"
@@ -91,7 +94,7 @@ async def download_files(
             files = group.get("files", [])
 
             if not files:
-                print(f"[downloader] No files for '{content_type}' — skipping group.")
+                logger.info(f"No files for '{content_type}' — skipping group.")
                 continue
 
             # Build target directory
@@ -104,14 +107,14 @@ async def download_files(
             # Use \\?\ prefix on Windows to support long paths
             target_dir = Path(f"\\\\?\\{target_dir.resolve()}")
             target_dir.mkdir(parents=True, exist_ok=True)
-            print(f"[downloader] Saving '{content_type}' files to: {target_dir}")
+            logger.info(f"Saving '{content_type}' files to: {target_dir}")
 
             for file_info in files:
                 url = file_info.get("url", "")
                 name = _sanitise_name(file_info.get("name", "")) or "download"
 
                 if not url:
-                    print(f"[downloader]   Skipping entry with empty URL.")
+                    logger.warning("Skipping entry with empty URL.")
                     skipped += 1
                     continue
 
@@ -119,16 +122,16 @@ async def download_files(
 
                 # Duplicate check
                 if dest.exists():
-                    print(f"[downloader]   '{name}' already exists — skipped.")
+                    logger.info(f"'{name}' already exists — skipped.")
                     skipped += 1
                     continue
 
                 # Download
-                print(f"[downloader]   Downloading {name}...", end=" ", flush=True)
+                logger.info(f"Downloading {name}...")
                 try:
                     async with session.get(url, timeout=aiohttp.ClientTimeout(total=120)) as resp:
                         if resp.status != 200:
-                            print(f"HTTP {resp.status} — failed.")
+                            logger.error(f"HTTP {resp.status} — failed for {name}.")
                             failed += 1
                             continue
 
@@ -146,7 +149,7 @@ async def download_files(
                             dest = target_dir / _sanitise_name(name)
 
                         if dest.exists():
-                            print(f"'{_sanitise_name(name)}' already exists — skipped.")
+                            logger.info(f"'{_sanitise_name(name)}' already exists — skipped.")
                             skipped += 1
                             continue
 
@@ -155,11 +158,11 @@ async def download_files(
                             async for chunk in resp.content.iter_chunked(8192):
                                 f.write(chunk)
 
-                    print("Done.")
+                    logger.info(f"Downloaded {name} successfully.")
                     downloaded += 1
 
                 except Exception as e:
-                    print(f"Error: {e}")
+                    logger.error(f"Error downloading {name}: {e}")
                     failed += 1
                     # Clean up partial file
                     if dest.exists():
@@ -169,8 +172,8 @@ async def download_files(
                             pass
 
     summary = {"downloaded": downloaded, "skipped": skipped, "failed": failed}
-    print(
-        f"[downloader] Finished — downloaded: {downloaded}, "
+    logger.info(
+        f"Finished — downloaded: {downloaded}, "
         f"skipped: {skipped}, failed: {failed}"
     )
     return summary

@@ -1,5 +1,5 @@
+import logging
 import uuid
-import traceback
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
@@ -14,6 +14,8 @@ from app.automation.navigator import (
 )
 from app.automation.extractor import extract_content_from_table
 from app.automation.downloader import download_files
+
+logger = logging.getLogger(__name__)
 
 # Column names we care about (subset — the table may have more)
 ALL_CONTENT_TYPES = [
@@ -68,11 +70,11 @@ async def login_endpoint(body: LoginRequest):
     """Authenticate and return session_id."""
     session_id = str(uuid.uuid4())
     try:
-        print(f"[routes] /login — creating session {session_id}…", flush=True)
+        logger.info(f"/login — creating session {session_id}…")
         try:
             session = await create_session(session_id)
         except Exception as e:
-            traceback.print_exc()
+            logger.exception("Browser session creation failed")
             return JSONResponse(status_code=500, content={
                 "status": "error",
                 "message": f"Browser session failed: {type(e).__name__}: {e}",
@@ -82,17 +84,17 @@ async def login_endpoint(body: LoginRequest):
         success = await run_in_pw_loop(login(page, body.username, body.password))
 
         if success:
-            print(f"[routes] /login — success", flush=True)
+            logger.info("/login — success")
             return {"status": "success", "session_id": session_id}
         else:
-            print(f"[routes] /login — failed", flush=True)
+            logger.warning("/login — failed")
             await close_session(session_id)
             return JSONResponse(status_code=401, content={
                 "status": "error",
                 "message": "Invalid credentials. Please check your SRN and password.",
             })
     except Exception as e:
-        traceback.print_exc()
+        logger.exception("Login error")
         await close_session(session_id)
         return JSONResponse(status_code=500, content={
             "status": "error", "message": f"{type(e).__name__}: {e}",
@@ -119,7 +121,7 @@ async def fetch_courses_endpoint(body: SessionRequest):
         return {"status": "success", "courses": courses}
 
     except Exception as e:
-        traceback.print_exc()
+        logger.exception("Error fetching courses")
         return JSONResponse(status_code=500, content={
             "status": "error", "message": str(e),
         })
@@ -140,7 +142,7 @@ async def fetch_units_endpoint(body: CourseRequest):
         return {"status": "success", "units": units}
 
     except Exception as e:
-        traceback.print_exc()
+        logger.exception("Error fetching units")
         return JSONResponse(status_code=500, content={
             "status": "error", "message": str(e),
         })
@@ -164,7 +166,7 @@ async def click_unit_endpoint(body: UnitRequest):
         return {"status": "success", "columns": col_map}
 
     except Exception as e:
-        traceback.print_exc()
+        logger.exception("Error clicking unit")
         return JSONResponse(status_code=500, content={
             "status": "error", "message": str(e),
         })
@@ -214,7 +216,7 @@ async def download_endpoint(body: DownloadRequest):
         return {"status": "success", "summary": summary}
 
     except Exception as e:
-        traceback.print_exc()
+        logger.exception("Error during download")
         return JSONResponse(status_code=500, content={
             "status": "error", "message": str(e),
         })

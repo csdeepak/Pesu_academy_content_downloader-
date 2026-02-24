@@ -1,0 +1,11 @@
+__pycache__/
+venv/
+.venv/
+*.pyc
+*.pyo
+downloads/debug/
+.git
+.gitignore
+README.md
+LICENSE
+*.md

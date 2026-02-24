@@ -1,3 +1,6 @@
+import logging
+import os
+
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -6,7 +9,19 @@ from pathlib import Path
 
 from app.routes import router
 
-app = FastAPI(title="PESU Academy Content Downloader")
+# ── Logging ──────────────────────────────────────────────────
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+logging.basicConfig(
+    level=LOG_LEVEL,
+    format="%(asctime)s  %(levelname)-8s  %(name)s  %(message)s",
+    datefmt="%H:%M:%S",
+)
+
+app = FastAPI(
+    title="PESU Vault",
+    description="Automate downloading course content from PESU Academy",
+    version="1.0.0",
+)
 
 # Paths
 BASE_DIR = Path(__file__).resolve().parent
@@ -23,4 +38,4 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 app.include_router(router)
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("app.main:app", host="0.0.0.0", port=8001, reload=True)

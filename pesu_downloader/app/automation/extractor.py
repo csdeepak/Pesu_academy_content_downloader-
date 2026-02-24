@@ -22,10 +22,13 @@ Everything runs in Playwright's dedicated event loop.
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 from collections import defaultdict
 
 from playwright.async_api import Page, TimeoutError as PlaywrightTimeout
+
+logger = logging.getLogger(__name__)
 
 
 # Content-type name → numeric ID as used by PESU Academy
@@ -72,7 +75,7 @@ async def _scan_table_cells(
             col_to_type[idx] = ct
 
     if not col_to_type:
-        print("[extractor] None of the requested content types are in the table.", flush=True)
+        logger.warning("None of the requested content types are in the table.")
         return []
 
     cells_data = await page.evaluate("""(colToType) => {
@@ -107,7 +110,7 @@ async def _scan_table_cells(
         return results;
     }""", {str(k): v for k, v in col_to_type.items()})
 
-    print(f"[extractor] Found {len(cells_data)} non-empty cell(s) across {len(content_types)} content type(s).", flush=True)
+    logger.info(f"Found {len(cells_data)} non-empty cell(s) across {len(content_types)} content type(s).")
     return cells_data
 
 
@@ -126,7 +129,7 @@ async def _extract_files_from_detail_page(
     """
     type_id = _CONTENT_TYPE_IDS.get(content_type)
     if type_id is None:
-        print(f"[extractor] Unknown content type: {content_type}", flush=True)
+        logger.warning(f"Unknown content type: {content_type}")
         return []
 
     # Click the correct content type tab
@@ -141,7 +144,7 @@ async def _extract_files_from_detail_page(
             except PlaywrightTimeout:
                 pass
     except Exception as e:
-        print(f"[extractor] Could not click tab {tab_selector}: {e}", flush=True)
+        logger.error(f"Could not click tab {tab_selector}: {e}")
 
     # Extract downloadcoursedoc UUIDs and file names from the active content
     files = await page.evaluate("""() => {
@@ -187,7 +190,7 @@ async def _navigate_back_to_units(
     Calls courseContentinfo(subjectId) to return to the course page,
     then clicks the unit tab at *unit_index* to show the content table.
     """
-    print(f"[extractor] Navigating back to units (subject {subject_id}, unit {unit_index})…", flush=True)
+    logger.info(f"Navigating back to units (subject {subject_id}, unit {unit_index})…")
 
     # Call courseContentinfo to return to the course page
     try:
@@ -198,7 +201,7 @@ async def _navigate_back_to_units(
         except PlaywrightTimeout:
             pass
     except Exception as e:
-        print(f"[extractor] courseContentinfo failed: {e}", flush=True)
+        logger.error(f"courseContentinfo failed: {e}")
 
     # Wait for Course Units tab and click it
     try:
@@ -224,7 +227,7 @@ async def _navigate_back_to_units(
         except PlaywrightTimeout:
             pass
     except Exception as e:
-        print(f"[extractor] Failed to click unit tab: {e}", flush=True)
+        logger.error(f"Failed to click unit tab: {e}")
 
 
 # ──────────────────────────────────────────────────────────────
@@ -260,7 +263,7 @@ async def extract_content_from_table(
     cells_data = await _scan_table_cells(page, col_map, content_types)
 
     if not cells_data:
-        print("[extractor] No content found in the table.", flush=True)
+        logger.info("No content found in the table.")
         return [{"content_type": ct, "files": []} for ct in content_types]
 
     # Extract subjectId from the first onclick
@@ -270,7 +273,7 @@ async def extract_content_from_table(
     sid_match = re.search(r"handleclasscoursecontentunit\([^,]+,\s*'(\d+)'", first_onclick)
     if sid_match:
         subject_id = sid_match.group(1)
-    print(f"[extractor] Subject ID: {subject_id}", flush=True)
+    logger.info(f"Subject ID: {subject_id}")
 
     # Group cells by (rowIdx, className) so we visit each class once
     # and collect all content types for that class in one visit
@@ -281,7 +284,7 @@ async def extract_content_from_table(
             classes[row] = {"className": cell["className"], "types": {}}
         classes[row]["types"][cell["contentType"]] = cell["onclick"]
 
-    print(f"[extractor] Will visit {len(classes)} class(es).", flush=True)
+    logger.info(f"Will visit {len(classes)} class(es).")
 
     # Collect files per content type
     files_by_type: dict[str, list[dict]] = {ct: [] for ct in content_types}
@@ -290,7 +293,7 @@ async def extract_content_from_table(
         class_name = class_info["className"]
         types_to_extract = class_info["types"]
 
-        print(f"[extractor] Visiting class [{row_idx}] '{class_name}' ({len(types_to_extract)} type(s))…", flush=True)
+        logger.info(f"Visiting class [{row_idx}] '{class_name}' ({len(types_to_extract)} type(s))…")
 
         # Navigate to the class detail page using the first available onclick
         # Replace 'event' with a dummy event object since we're calling from evaluate()
@@ -305,21 +308,21 @@ async def extract_content_from_table(
             except PlaywrightTimeout:
                 pass
         except Exception as e:
-            print(f"[extractor]   Failed to navigate to class: {e}", flush=True)
+            logger.error(f"Failed to navigate to class: {e}")
             continue
 
         # For each content type in this class, click the tab and extract files
         for ctype, onclick in types_to_extract.items():
-            print(f"[extractor]   Extracting '{ctype}'…", flush=True)
+            logger.info(f"Extracting '{ctype}'…")
             try:
                 found_files = await _extract_files_from_detail_page(page, ctype)
                 # Prefix file names with class name
                 for f in found_files:
                     f["name"] = f"{class_name} — {f['name']}"
                 files_by_type[ctype].extend(found_files)
-                print(f"[extractor]     Found {len(found_files)} file(s).", flush=True)
+                logger.info(f"Found {len(found_files)} file(s).")
             except Exception as e:
-                print(f"[extractor]     Error extracting '{ctype}': {e}", flush=True)
+                logger.error(f"Error extracting '{ctype}': {e}")
 
         # Navigate back to the content table
         await _navigate_back_to_units(page, subject_id, unit_index)
@@ -329,8 +332,8 @@ async def extract_content_from_table(
     for ct in content_types:
         files = files_by_type.get(ct, [])
         all_content.append({"content_type": ct, "files": files})
-        print(f"[extractor] '{ct}': {len(files)} file(s).", flush=True)
+        logger.info(f"'{ct}': {len(files)} file(s).")
 
     total = sum(len(c["files"]) for c in all_content)
-    print(f"[extractor] Extraction complete. {total} file(s) total.", flush=True)
+    logger.info(f"Extraction complete. {total} file(s) total.")
     return all_content

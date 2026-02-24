@@ -1,0 +1,38 @@
+# ── Python ───────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+
+# ── Virtual environment ─────────────────────────────────────
+venv/
+.venv/
+env/
+
+# ── IDE / editor ────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ── Environment variables ───────────────────────────────────
+.env
+.env.*
+
+# ── Debug artifacts ─────────────────────────────────────────
+pesu_downloader/downloads/debug/
+*.png
+
+# ── Downloads (user-generated) ──────────────────────────────
+pesu_downloader/downloads/*
+!pesu_downloader/downloads/.gitkeep
+
+# ── Misc ────────────────────────────────────────────────────
+*.log
+*.bak
